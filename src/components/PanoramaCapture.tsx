@@ -15,39 +15,39 @@ export const PanoramaCapture: React.FC<PanoramaCaptureProps> = ({
   const [progress, setProgress] = useState(0);
   const [countdown, setCountdown] = useState<number | null>(null);
   const [frames, setFrames] = useState<string[]>([]);
+  const [isInitializing, setIsInitializing] = useState(false);
 
-  const [cameraInitialized, setCameraInitialized] = useState(false);
-
-  useEffect(() => {
-    // Start camera on mount
-    const initCamera = async () => {
-      try {
-        await startCamera({
-          facingMode: 'environment',
-          width: 1280,
-          height: 720,
-        });
-        setCameraInitialized(true);
-      } catch (err) {
-        const errorMsg = err instanceof Error ? err.message : 'Failed to start camera';
-        console.error('Camera initialization error:', err);
-        onError(`Camera Error: ${errorMsg}. Please check permissions and try again.`);
-        setCameraInitialized(false);
-      }
-    };
-
-    initCamera();
-
-    return () => {
-      stopCamera();
-    };
-  }, [startCamera, stopCamera, onError]);
-
+  // Handle camera errors
   useEffect(() => {
     if (cameraError) {
       onError(cameraError);
+      setIsInitializing(false);
     }
   }, [cameraError, onError]);
+
+  // Cleanup on unmount
+  useEffect(() => {
+    return () => {
+      stopCamera();
+    };
+  }, [stopCamera]);
+
+  const handleEnableCamera = async () => {
+    setIsInitializing(true);
+    try {
+      await startCamera({
+        facingMode: 'environment',
+        width: 1280,
+        height: 720,
+      });
+    } catch (err) {
+      const errorMsg = err instanceof Error ? err.message : 'Failed to start camera';
+      console.error('Camera initialization error:', err);
+      onError(`Camera Error: ${errorMsg}. Please check permissions and try again.`);
+    } finally {
+      setIsInitializing(false);
+    }
+  };
 
   const startCapture = async () => {
     if (!isActive) {
@@ -136,30 +136,30 @@ export const PanoramaCapture: React.FC<PanoramaCaptureProps> = ({
           {!isActive && (
             <div className="absolute inset-0 flex items-center justify-center bg-black bg-opacity-80">
               <div className="text-center p-6">
-                <div className="animate-spin rounded-full h-12 w-12 border-t-4 border-b-4 border-blue-500 mx-auto mb-4"></div>
-                <p className="text-xl mb-2">Initializing Camera...</p>
-                <p className="text-sm text-gray-400">Please allow camera access when prompted</p>
-                {cameraError && (
-                  <div className="mt-4 p-4 bg-red-900 bg-opacity-50 rounded">
-                    <p className="text-red-200 text-sm">{cameraError}</p>
+                {isInitializing ? (
+                  <>
+                    <div className="animate-spin rounded-full h-12 w-12 border-t-4 border-b-4 border-blue-500 mx-auto mb-4"></div>
+                    <p className="text-xl mb-2">Initializing Camera...</p>
+                    <p className="text-sm text-gray-400">Please allow camera access when prompted</p>
+                  </>
+                ) : (
+                  <>
+                    <div className="text-6xl mb-4">📷</div>
+                    <p className="text-xl mb-4">Camera Not Active</p>
+                    <p className="text-sm text-gray-400 mb-6">Click the button below to enable your camera</p>
+                    {cameraError && (
+                      <div className="mt-4 p-4 bg-red-900 bg-opacity-50 rounded mb-4">
+                        <p className="text-red-200 text-sm mb-2">{cameraError}</p>
+                      </div>
+                    )}
                     <button
-                      onClick={async () => {
-                        try {
-                          await startCamera({
-                            facingMode: 'environment',
-                            width: 1280,
-                            height: 720,
-                          });
-                          setCameraInitialized(true);
-                        } catch (err) {
-                          onError(err instanceof Error ? err.message : 'Failed to start camera');
-                        }
-                      }}
-                      className="mt-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded"
+                      onClick={handleEnableCamera}
+                      disabled={isInitializing}
+                      className="px-6 py-3 bg-blue-600 hover:bg-blue-700 disabled:bg-gray-600 disabled:cursor-not-allowed text-white font-semibold rounded-lg transition-colors"
                     >
-                      Retry Camera Access
+                      Enable Camera
                     </button>
-                  </div>
+                  </>
                 )}
               </div>
             </div>

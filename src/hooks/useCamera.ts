@@ -23,6 +23,7 @@ export const useCamera = (): UseCameraReturn => {
   const [error, setError] = useState<string | null>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const isRequestingRef = useRef(false);
 
   // Create canvas for frame capture
   useEffect(() => {
@@ -32,14 +33,30 @@ export const useCamera = (): UseCameraReturn => {
   }, []);
 
   const startCamera = useCallback(async (constraints?: CameraConstraints) => {
+    // Prevent multiple simultaneous requests
+    if (isRequestingRef.current) {
+      throw new Error('Camera request already in progress');
+    }
+
     try {
+      isRequestingRef.current = true;
       setError(null);
+      setIsActive(false);
       
-      // Stop existing stream
+      // Stop existing stream first
       if (stream) {
-        stream.getTracks().forEach(track => track.stop());
+        stream.getTracks().forEach(track => {
+          track.stop();
+        });
+        setStream(null);
       }
 
+      // Check if getUserMedia is available
+      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+        throw new Error('Camera API not available. Please use HTTPS or localhost.');
+      }
+
+      // Try with ideal constraints first
       const defaultConstraints: MediaStreamConstraints = {
         video: {
           facingMode: constraints?.facingMode || 'environment',
@@ -50,44 +67,36 @@ export const useCamera = (): UseCameraReturn => {
         audio: false,
       };
 
-      // Check if getUserMedia is available
-      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-        throw new Error('Camera API not available. Please use HTTPS or localhost.');
+      let mediaStream: MediaStream;
+      
+      try {
+        mediaStream = await navigator.mediaDevices.getUserMedia(defaultConstraints);
+      } catch (constraintError: any) {
+        // If constraints fail, try with minimal constraints
+        if (constraintError.name === 'OverconstrainedError' || constraintError.name === 'ConstraintNotSatisfiedError') {
+          console.warn('Ideal constraints not satisfied, trying minimal constraints...');
+          mediaStream = await navigator.mediaDevices.getUserMedia({
+            video: { facingMode: constraints?.facingMode || 'environment' },
+            audio: false,
+          });
+        } else {
+          throw constraintError;
+        }
       }
 
-      const mediaStream = await navigator.mediaDevices.getUserMedia(defaultConstraints);
       setStream(mediaStream);
       setIsActive(true);
 
       if (videoRef.current) {
         videoRef.current.srcObject = mediaStream;
         
-        // Wait for video to be ready
-        await new Promise<void>((resolve, reject) => {
-          if (!videoRef.current) {
-            reject(new Error('Video element not available'));
-            return;
-          }
-
-          const video = videoRef.current;
-          
-          const onLoadedMetadata = () => {
-            video.play()
-              .then(() => {
-                resolve();
-              })
-              .catch(reject);
-            video.removeEventListener('loadedmetadata', onLoadedMetadata);
-          };
-
-          video.addEventListener('loadedmetadata', onLoadedMetadata);
-          
-          // Timeout after 5 seconds
-          setTimeout(() => {
-            video.removeEventListener('loadedmetadata', onLoadedMetadata);
-            reject(new Error('Camera video timeout'));
-          }, 5000);
-        });
+        // Wait for video to be ready with simpler approach
+        try {
+          await videoRef.current.play();
+        } catch (playError) {
+          console.warn('Video play error:', playError);
+          // Sometimes play() fails but video still works
+        }
       }
     } catch (err: any) {
       let errorMessage = 'Failed to access camera';
@@ -98,24 +107,8 @@ export const useCamera = (): UseCameraReturn => {
         errorMessage = 'No camera found. Please connect a camera and try again.';
       } else if (err.name === 'NotReadableError' || err.name === 'TrackStartError') {
         errorMessage = 'Camera is already in use by another application.';
-      } else if (err.name === 'OverconstrainedError' || err.name === 'ConstraintNotSatisfiedError') {
-        errorMessage = 'Camera constraints not satisfied. Trying with default settings...';
-        // Try with minimal constraints
-        try {
-          const fallbackStream = await navigator.mediaDevices.getUserMedia({
-            video: { facingMode: constraints?.facingMode || 'environment' },
-            audio: false,
-          });
-          setStream(fallbackStream);
-          setIsActive(true);
-          if (videoRef.current) {
-            videoRef.current.srcObject = fallbackStream;
-            await videoRef.current.play();
-          }
-          return; // Success with fallback
-        } catch (fallbackErr) {
-          errorMessage = 'Failed to access camera with any settings.';
-        }
+      } else if (err.name === 'AbortError' || err.message?.includes('aborted')) {
+        errorMessage = 'Camera operation was aborted. Please try again.';
       } else if (err.message) {
         errorMessage = err.message;
       }
@@ -124,6 +117,8 @@ export const useCamera = (): UseCameraReturn => {
       setError(errorMessage);
       setIsActive(false);
       throw new Error(errorMessage);
+    } finally {
+      isRequestingRef.current = false;
     }
   }, [stream]);
 

@@ -50,19 +50,80 @@ export const useCamera = (): UseCameraReturn => {
         audio: false,
       };
 
+      // Check if getUserMedia is available
+      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+        throw new Error('Camera API not available. Please use HTTPS or localhost.');
+      }
+
       const mediaStream = await navigator.mediaDevices.getUserMedia(defaultConstraints);
       setStream(mediaStream);
       setIsActive(true);
 
       if (videoRef.current) {
         videoRef.current.srcObject = mediaStream;
-        await videoRef.current.play();
+        
+        // Wait for video to be ready
+        await new Promise<void>((resolve, reject) => {
+          if (!videoRef.current) {
+            reject(new Error('Video element not available'));
+            return;
+          }
+
+          const video = videoRef.current;
+          
+          const onLoadedMetadata = () => {
+            video.play()
+              .then(() => {
+                resolve();
+              })
+              .catch(reject);
+            video.removeEventListener('loadedmetadata', onLoadedMetadata);
+          };
+
+          video.addEventListener('loadedmetadata', onLoadedMetadata);
+          
+          // Timeout after 5 seconds
+          setTimeout(() => {
+            video.removeEventListener('loadedmetadata', onLoadedMetadata);
+            reject(new Error('Camera video timeout'));
+          }, 5000);
+        });
       }
-    } catch (err) {
-      const errorMessage = err instanceof Error ? err.message : 'Failed to access camera';
+    } catch (err: any) {
+      let errorMessage = 'Failed to access camera';
+      
+      if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError') {
+        errorMessage = 'Camera permission denied. Please allow camera access in your browser settings.';
+      } else if (err.name === 'NotFoundError' || err.name === 'DevicesNotFoundError') {
+        errorMessage = 'No camera found. Please connect a camera and try again.';
+      } else if (err.name === 'NotReadableError' || err.name === 'TrackStartError') {
+        errorMessage = 'Camera is already in use by another application.';
+      } else if (err.name === 'OverconstrainedError' || err.name === 'ConstraintNotSatisfiedError') {
+        errorMessage = 'Camera constraints not satisfied. Trying with default settings...';
+        // Try with minimal constraints
+        try {
+          const fallbackStream = await navigator.mediaDevices.getUserMedia({
+            video: { facingMode: constraints?.facingMode || 'environment' },
+            audio: false,
+          });
+          setStream(fallbackStream);
+          setIsActive(true);
+          if (videoRef.current) {
+            videoRef.current.srcObject = fallbackStream;
+            await videoRef.current.play();
+          }
+          return; // Success with fallback
+        } catch (fallbackErr) {
+          errorMessage = 'Failed to access camera with any settings.';
+        }
+      } else if (err.message) {
+        errorMessage = err.message;
+      }
+      
+      console.error('Camera error:', err);
       setError(errorMessage);
       setIsActive(false);
-      throw err;
+      throw new Error(errorMessage);
     }
   }, [stream]);
 

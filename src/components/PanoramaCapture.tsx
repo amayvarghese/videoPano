@@ -16,15 +16,27 @@ export const PanoramaCapture: React.FC<PanoramaCaptureProps> = ({
   const [countdown, setCountdown] = useState<number | null>(null);
   const [frames, setFrames] = useState<string[]>([]);
 
+  const [cameraInitialized, setCameraInitialized] = useState(false);
+
   useEffect(() => {
     // Start camera on mount
-    startCamera({
-      facingMode: 'environment',
-      width: 1280,
-      height: 720,
-    }).catch(err => {
-      onError(err instanceof Error ? err.message : 'Failed to start camera');
-    });
+    const initCamera = async () => {
+      try {
+        await startCamera({
+          facingMode: 'environment',
+          width: 1280,
+          height: 720,
+        });
+        setCameraInitialized(true);
+      } catch (err) {
+        const errorMsg = err instanceof Error ? err.message : 'Failed to start camera';
+        console.error('Camera initialization error:', err);
+        onError(`Camera Error: ${errorMsg}. Please check permissions and try again.`);
+        setCameraInitialized(false);
+      }
+    };
+
+    initCamera();
 
     return () => {
       stopCamera();
@@ -98,14 +110,57 @@ export const PanoramaCapture: React.FC<PanoramaCaptureProps> = ({
             playsInline
             muted
             className="w-full h-full object-cover"
+            onLoadedMetadata={() => {
+              console.log('Video metadata loaded:', {
+                width: videoRef.current?.videoWidth,
+                height: videoRef.current?.videoHeight,
+              });
+            }}
+            onError={(e) => {
+              console.error('Video element error:', e);
+              onError('Video playback error. Please check your camera permissions.');
+            }}
           />
           
-          {/* Overlay instructions */}
-          {!isCapturing && countdown === null && (
-            <div className="absolute inset-0 flex items-center justify-center bg-black bg-opacity-50">
-              <div className="text-center p-6">
+          {/* Overlay instructions - only show when camera is active and not capturing */}
+          {!isCapturing && countdown === null && isActive && (
+            <div className="absolute inset-0 flex items-center justify-center bg-black bg-opacity-30 pointer-events-none">
+              <div className="text-center p-6 bg-black bg-opacity-50 rounded-lg">
                 <p className="text-xl mb-4">Position yourself in the center</p>
                 <p className="text-lg text-gray-300">Hold device steady at eye level</p>
+              </div>
+            </div>
+          )}
+
+          {/* Camera not active overlay */}
+          {!isActive && (
+            <div className="absolute inset-0 flex items-center justify-center bg-black bg-opacity-80">
+              <div className="text-center p-6">
+                <div className="animate-spin rounded-full h-12 w-12 border-t-4 border-b-4 border-blue-500 mx-auto mb-4"></div>
+                <p className="text-xl mb-2">Initializing Camera...</p>
+                <p className="text-sm text-gray-400">Please allow camera access when prompted</p>
+                {cameraError && (
+                  <div className="mt-4 p-4 bg-red-900 bg-opacity-50 rounded">
+                    <p className="text-red-200 text-sm">{cameraError}</p>
+                    <button
+                      onClick={async () => {
+                        try {
+                          await startCamera({
+                            facingMode: 'environment',
+                            width: 1280,
+                            height: 720,
+                          });
+                          setCameraInitialized(true);
+                        } catch (err) {
+                          onError(err instanceof Error ? err.message : 'Failed to start camera');
+                        }
+                      }}
+                      className="mt-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded"
+                    >
+                      Retry Camera Access
+                    </button>
+                  </div>
+                )}
               </div>
             </div>
           )}
